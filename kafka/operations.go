@@ -177,3 +177,8 @@ func (kc *KafkaClient) SeekToEnd(ctx context.Context, topic string) error {
 func (kc *KafkaClient) SeekToOffset(ctx context.Context, topic string, offset int64) error {
 	return kc.consumer.SetOffset(offset)
 }
+
+// CommitMessage подтверждает обработку сообщения
+func (kc *KafkaClient) CommitMessage(ctx context.Context, message kafka.Message) error {
+	return kc.consumer.CommitMessages(ctx, message)
+}
