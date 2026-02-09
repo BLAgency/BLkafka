@@ -95,12 +95,21 @@ config.Topic = "my-topic"
 
 ### Инициализация
 
-- `InitKafka(config *Config) *KafkaClient` - инициализирует клиент с конфигом
-- `InitKafkaWithKey(key string, config *Config) *KafkaClient` - инициализирует клиент с ключом
-- `GetKafka() *KafkaClient` - получает клиент по умолчанию
-- `GetKafkaByKey(key string) *KafkaClient` - получает клиент по ключу
-- `Close()` - закрывает все соединения
-- `CloseByKey(key string)` - закрывает соединение по ключу
+#### InitKafka(connString string) *KafkaClient
+
+Инициализирует Kafka клиент с ключом "default" и одним брокером.
+
+#### InitKafkaWithKey(key string, brokers []string, config *Config) *KafkaClient
+
+Инициализирует Kafka клиент с указанным ключом, списком брокеров и конфигурацией.
+
+#### GetKafka() *KafkaClient
+
+Возвращает клиент с ключом "default".
+
+#### GetKafkaByKey(key string) *KafkaClient
+
+Возвращает клиент по ключу.
 
 ### Producer
 

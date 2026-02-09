@@ -1,9 +1,10 @@
 package kafka
 
 import (
-	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
-	"log"
+	"io/ioutil"
 	"sync"
 
 	"github.com/segmentio/kafka-go"
@@ -15,20 +16,17 @@ var (
 	once      sync.Once
 )
 
-// KafkaClient представляет клиент для работы с Kafka
 type KafkaClient struct {
-	config   *Config
 	producer *kafka.Writer
 	consumer *kafka.Reader
+	config   *Config
 }
 
-// InitKafka инициализирует подключение к Kafka с переданной конфигурацией (для обратной совместимости, использует "default" как ключ)
-func InitKafka(config *Config) *KafkaClient {
-	return InitKafkaWithKey("default", config)
+func InitKafka(connString string) *KafkaClient {
+	return InitKafkaWithKey("default", []string{connString}, DefaultConfig())
 }
 
-// InitKafkaWithKey инициализирует подключение к Kafka с ключом и конфигурацией
-func InitKafkaWithKey(key string, config *Config) *KafkaClient {
+func InitKafkaWithKey(key string, brokers []string, config *Config) *KafkaClient {
 	once.Do(func() {
 		instances = make(map[string]*KafkaClient)
 	})
@@ -37,47 +35,70 @@ func InitKafkaWithKey(key string, config *Config) *KafkaClient {
 	defer mu.Unlock()
 
 	if _, exists := instances[key]; exists {
-		log.Printf("Подключение к Kafka '%s' уже инициализировано", key)
+		fmt.Printf("Kafka клиент '%s' уже инициализирован\n", key)
 		return instances[key]
 	}
 
-	// Создаем producer
-	producer := &kafka.Writer{
-		Addr:         kafka.TCP(config.Brokers...),
+	client := &KafkaClient{
+		config: config,
+	}
+
+	// Настройка TLS если включен SSL
+	var tlsConfig *tls.Config
+	if config.UseSSL != nil && *config.UseSSL {
+		var err error
+		tlsConfig, err = createTLSConfig(config)
+		if err != nil {
+			panic(fmt.Sprintf("Ошибка создания TLS конфигурации для Kafka клиента '%s': %v", key, err))
+		}
+	}
+
+	// Настройка producer
+	writerConfig := kafka.WriterConfig{
+		Brokers:      brokers,
 		Topic:        config.Topic,
 		Balancer:     &kafka.LeastBytes{},
-		BatchSize:    config.BatchSize,
-		BatchTimeout: config.BatchTimeout,
+		RequiredAcks: config.RequiredAcks,
+		Async:        false,
 		WriteTimeout: config.WriteTimeout,
-		RequiredAcks: kafka.RequiredAcks(config.RequiredAcks),
 		MaxAttempts:  config.MaxAttempts,
 	}
 
-	// Создаем consumer
-	consumer := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:     config.Brokers,
+	if tlsConfig != nil {
+		writerConfig.Dialer = &kafka.Dialer{
+			TLS: tlsConfig,
+		}
+	}
+
+	client.producer = kafka.NewWriter(writerConfig)
+
+	// Настройка consumer
+	readerConfig := kafka.ReaderConfig{
+		Brokers:     brokers,
 		Topic:       config.Topic,
 		GroupID:     config.GroupID,
 		StartOffset: kafka.LastOffset,
-	})
-
-	client := &KafkaClient{
-		config:   config,
-		producer: producer,
-		consumer: consumer,
+		MaxAttempts: config.MaxAttempts,
 	}
 
+	if tlsConfig != nil {
+		readerConfig.Dialer = &kafka.Dialer{
+			TLS: tlsConfig,
+		}
+	}
+
+	client.consumer = kafka.NewReader(readerConfig)
+
 	instances[key] = client
-	fmt.Printf("Подключение к Kafka '%s' установлено\n", key)
+	sslEnabled := config.UseSSL != nil && *config.UseSSL
+	fmt.Printf("Kafka клиент '%s' инициализирован (SSL: %t)\n", key, sslEnabled)
 	return client
 }
 
-// GetKafka возвращает экземпляр клиента Kafka по ключу (для обратной совместимости использует "default")
 func GetKafka() *KafkaClient {
 	return GetKafkaByKey("default")
 }
 
-// GetKafkaByKey возвращает экземпляр клиента Kafka по ключу
 func GetKafkaByKey(key string) *KafkaClient {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -85,54 +106,71 @@ func GetKafkaByKey(key string) *KafkaClient {
 	if client, exists := instances[key]; exists {
 		return client
 	}
-	log.Fatalf("Kafka клиент '%s' не инициализирован. Вызовите InitKafkaWithKey() сначала.", key)
-	return nil
+	panic(fmt.Sprintf("Kafka клиент '%s' не инициализирован. Вызовите InitKafkaWithKey() сначала.", key))
 }
 
-// Close закрывает все подключения к Kafka
-func Close() {
+func CloseKafka() {
 	mu.Lock()
 	defer mu.Unlock()
 
 	for key, client := range instances {
-		if client != nil {
+		if client.producer != nil {
 			client.producer.Close()
-			client.consumer.Close()
-			fmt.Printf("Подключение к Kafka '%s' закрыто\n", key)
 		}
+		if client.consumer != nil {
+			client.consumer.Close()
+		}
+		fmt.Printf("Kafka клиент '%s' закрыт\n", key)
 	}
 	instances = nil
 }
 
-// CloseByKey закрывает подключение к Kafka по ключу
-func CloseByKey(key string) {
+func CloseKafkaByKey(key string) {
 	mu.Lock()
 	defer mu.Unlock()
 
 	if client, exists := instances[key]; exists {
-		client.producer.Close()
-		client.consumer.Close()
-		fmt.Printf("Подключение к Kafka '%s' закрыто\n", key)
+		if client.producer != nil {
+			client.producer.Close()
+		}
+		if client.consumer != nil {
+			client.consumer.Close()
+		}
+		fmt.Printf("Kafka клиент '%s' закрыт\n", key)
 		delete(instances, key)
 	}
 }
 
-// Ping проверяет подключение к Kafka
-func (kc *KafkaClient) Ping(ctx context.Context) error {
-	// Проверяем producer
-	err := kc.producer.WriteMessages(ctx, kafka.Message{
-		Key:   []byte("ping"),
-		Value: []byte("ping"),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to ping producer: %w", err)
+// createTLSConfig создает TLS конфигурацию для Kafka
+func createTLSConfig(config *Config) (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: false, // В продакшене всегда false
 	}
 
-	// Проверяем consumer (просто пытаемся прочитать, но не блокируемся)
-	go func() {
-		defer kc.consumer.Close()
-		kc.consumer.ReadMessage(ctx)
-	}()
+	// Если передана кастомная конфигурация, используем её
+	if config.TLSConfig != nil {
+		return config.TLSConfig, nil
+	}
 
-	return nil
+	// Загружаем сертификаты из файлов
+	if config.TLSCertFile != "" && config.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(config.TLSCertFile, config.TLSKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка загрузки клиентского сертификата: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	// Настраиваем CA если указан
+	if config.TLSCAFile != "" {
+		caCert, err := ioutil.ReadFile(config.TLSCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка чтения CA сертификата: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	return tlsConfig, nil
 }
