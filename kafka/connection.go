@@ -45,6 +45,9 @@ func InitKafkaWithKey(key string, brokers []string, config *Config) *KafkaClient
 		config: config,
 	}
 
+	// Обновляем брокеры в конфиге
+	config.Brokers = brokers
+
 	// Настройка TLS если включен SSL
 	var tlsConfig *tls.Config
 	if config.UseSSL != nil && *config.UseSSL {

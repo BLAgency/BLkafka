@@ -27,7 +27,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Brokers:      []string{"localhost:9092"},
-		Topic:        "default-topic",
+		Topic:        "user-events",
 		GroupID:      "default-group",
 		BatchSize:    100,
 		BatchTimeout: 1 * time.Second,
