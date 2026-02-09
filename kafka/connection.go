@@ -146,7 +146,7 @@ func CloseKafkaByKey(key string) {
 // createTLSConfig создает TLS конфигурацию для Kafka
 func createTLSConfig(config *Config) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: false, // В продакшене всегда false
+		InsecureSkipVerify: true, // Для самоподписанных сертификатов
 	}
 
 	// Если передана кастомная конфигурация, используем её
