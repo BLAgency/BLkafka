@@ -23,7 +23,9 @@ type KafkaClient struct {
 }
 
 func InitKafka(connString string) *KafkaClient {
-	return InitKafkaWithKey("default", []string{connString}, DefaultConfig())
+	config := DefaultConfig()
+	config.UseSSL = &[]bool{true}[0] // Включаем SSL
+	return InitKafkaWithKey("default", []string{connString}, config)
 }
 
 func InitKafkaWithKey(key string, brokers []string, config *Config) *KafkaClient {

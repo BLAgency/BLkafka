@@ -15,17 +15,24 @@ func (kc *KafkaClient) Produce(ctx context.Context, key, value string) error {
 // ProduceWithTopic отправляет сообщение в указанный топик
 func (kc *KafkaClient) ProduceWithTopic(ctx context.Context, topic, key, value string) error {
 	message := kafka.Message{
-		Topic: topic,
 		Key:   []byte(key),
 		Value: []byte(value),
 	}
 
-	err := kc.producer.WriteMessages(ctx, message)
+	// Создаем временный writer для указанного топика
+	writer := &kafka.Writer{
+		Addr:     kafka.TCP(kc.config.Brokers...),
+		Topic:    topic,
+		Balancer: &kafka.LeastBytes{},
+	}
+
+	err := writer.WriteMessages(ctx, message)
 	if err != nil {
+		writer.Close()
 		return fmt.Errorf("failed to produce message: %w", err)
 	}
 
-	return nil
+	return writer.Close()
 }
 
 // Consume читает одно сообщение из топика
