@@ -19,12 +19,29 @@ func (kc *KafkaClient) ProduceWithTopic(ctx context.Context, topic, key, value s
 		Value: []byte(value),
 	}
 
-	// Создаем временный writer для указанного топика
-	writer := &kafka.Writer{
-		Addr:     kafka.TCP(kc.config.Brokers...),
-		Topic:    topic,
-		Balancer: &kafka.LeastBytes{},
+	// Создаем временный writer для указанного топика с правильной конфигурацией
+	writerConfig := kafka.WriterConfig{
+		Brokers:      kc.config.Brokers,
+		Topic:        topic,
+		Balancer:     &kafka.LeastBytes{},
+		RequiredAcks: kc.config.RequiredAcks,
+		Async:        false,
+		WriteTimeout: kc.config.WriteTimeout,
+		MaxAttempts:  kc.config.MaxAttempts,
 	}
+
+	// Если SSL включен, добавляем TLS dialer
+	if kc.config.UseSSL != nil && *kc.config.UseSSL {
+		tlsConfig, err := createTLSConfig(kc.config)
+		if err != nil {
+			return fmt.Errorf("failed to create TLS config: %w", err)
+		}
+		writerConfig.Dialer = &kafka.Dialer{
+			TLS: tlsConfig,
+		}
+	}
+
+	writer := kafka.NewWriter(writerConfig)
 
 	err := writer.WriteMessages(ctx, message)
 	if err != nil {
